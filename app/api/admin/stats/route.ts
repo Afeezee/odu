@@ -11,21 +11,22 @@ function query<T>(statement: string, params?: unknown[]) {
 }
 
 export async function GET() {
-  const gate = await requireAdmin();
-  if ("response" in gate) return gate.response;
+  try {
+    const gate = await requireAdmin();
+    if ("response" in gate) return gate.response;
 
-  // Run counts in parallel — neon-http is HTTP-based so each call is a
-  // round-trip; batching independent reads keeps p50 low.
-  const [
-    userCounts,
-    sessionCounts,
-    messageCounts,
-    chunkStats,
-    dailyActivityRows,
-    roleDistributionRows,
-    topUsersRows,
-    recentUsers,
-  ] = await Promise.all([
+    // Run counts in parallel — neon-http is HTTP-based so each call is a
+    // round-trip; batching independent reads keeps p50 low.
+    const [
+      userCounts,
+      sessionCounts,
+      messageCounts,
+      chunkStats,
+      dailyActivityRows,
+      roleDistributionRows,
+      topUsersRows,
+      recentUsers,
+    ] = await Promise.all([
     query<{
       total: number;
       admins: number;
@@ -85,9 +86,9 @@ export async function GET() {
          COUNT(*)::int AS total,
          COUNT(*) FILTER (WHERE role = 'user')::int AS user_msgs,
          COUNT(*) FILTER (WHERE role = 'assistant')::int AS assistant_msgs,
-         COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS msgs_24h,
-         COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS msgs_7d,
-         COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')::int AS msgs_30d,
+         COUNT(*) FILTER (WHERE chat_messages.created_at >= NOW() - INTERVAL '24 hours')::int AS msgs_24h,
+         COUNT(*) FILTER (WHERE chat_messages.created_at >= NOW() - INTERVAL '7 days')::int AS msgs_7d,
+         COUNT(*) FILTER (WHERE chat_messages.created_at >= NOW() - INTERVAL '30 days')::int AS msgs_30d,
          COALESCE(
            ROUND(
              COUNT(*) FILTER (WHERE chat_messages.role = 'user')::numeric /
@@ -216,67 +217,73 @@ export async function GET() {
        ORDER BY u.created_at DESC
        LIMIT 6`,
     ),
-  ]);
+    ]);
 
-  const userSummary = userCounts[0];
-  const sessionSummary = sessionCounts[0];
-  const messageSummary = messageCounts[0];
-  const totalUsers = Math.max(userSummary.total, 1);
-  const activeUsers30d = userSummary.active_30d;
+    const userSummary = userCounts[0];
+    const sessionSummary = sessionCounts[0];
+    const messageSummary = messageCounts[0];
+    const totalUsers = Math.max(userSummary.total, 1);
+    const activeUsers30d = userSummary.active_30d;
 
-  return NextResponse.json({
-    users: {
-      ...userSummary,
-      members: Math.max(userSummary.total - userSummary.admins, 0),
-      adminShare: Number(((userSummary.admins / totalUsers) * 100).toFixed(1)),
-      activationRate30d: Number(((activeUsers30d / totalUsers) * 100).toFixed(1)),
-    },
-    sessions: {
-      ...sessionSummary,
-      avgQuestionsPerSession: sessionSummary.avg_questions_per_session,
-      avgSessionsPerUser: sessionSummary.avg_sessions_per_user,
-    },
-    messages: {
-      ...messageSummary,
-      avgQuestionsPerUser: messageSummary.avg_questions_per_user,
-      responseRate: messageSummary.response_rate,
-    },
-    knowledgeBase: {
-      chunks: chunkStats[0].chunks,
-      avgLength: chunkStats[0].avg_length,
-      maxLength: chunkStats[0].max_length,
-    },
-    messagesPerDay: dailyActivityRows.slice(-14).map((r) => ({
-      day: r.day,
-      messages: r.messages,
-      userMessages: r.user_msgs,
-    })),
-    dailyActivity: dailyActivityRows.map((r) => ({
-      day: r.day,
-      messages: r.messages,
-      userMessages: r.user_msgs,
-      sessions: r.sessions,
-      signups: r.signups,
-    })),
-    roleDistribution: roleDistributionRows,
-    topUsers: topUsersRows.map((r) => ({
-      id: r.id,
-      email: r.email,
-      name: r.name,
-      role: r.role,
-      messageCount: r.message_count,
-      sessionCount: r.session_count,
-      lastMessageAt: r.last_message_at,
-    })),
-    recentUsers: recentUsers.map((r) => ({
-      id: r.id,
-      email: r.email,
-      name: r.name,
-      role: r.role,
-      createdAt: r.created_at,
-      sessionCount: r.session_count,
-      questionCount: r.question_count,
-      lastActiveAt: r.last_active_at,
-    })),
-  });
+    return NextResponse.json({
+      users: {
+        ...userSummary,
+        members: Math.max(userSummary.total - userSummary.admins, 0),
+        adminShare: Number(((userSummary.admins / totalUsers) * 100).toFixed(1)),
+        activationRate30d: Number(((activeUsers30d / totalUsers) * 100).toFixed(1)),
+      },
+      sessions: {
+        ...sessionSummary,
+        avgQuestionsPerSession: sessionSummary.avg_questions_per_session,
+        avgSessionsPerUser: sessionSummary.avg_sessions_per_user,
+      },
+      messages: {
+        ...messageSummary,
+        avgQuestionsPerUser: messageSummary.avg_questions_per_user,
+        responseRate: messageSummary.response_rate,
+      },
+      knowledgeBase: {
+        chunks: chunkStats[0].chunks,
+        avgLength: chunkStats[0].avg_length,
+        maxLength: chunkStats[0].max_length,
+      },
+      messagesPerDay: dailyActivityRows.slice(-14).map((r) => ({
+        day: r.day,
+        messages: r.messages,
+        userMessages: r.user_msgs,
+      })),
+      dailyActivity: dailyActivityRows.map((r) => ({
+        day: r.day,
+        messages: r.messages,
+        userMessages: r.user_msgs,
+        sessions: r.sessions,
+        signups: r.signups,
+      })),
+      roleDistribution: roleDistributionRows,
+      topUsers: topUsersRows.map((r) => ({
+        id: r.id,
+        email: r.email,
+        name: r.name,
+        role: r.role,
+        messageCount: r.message_count,
+        sessionCount: r.session_count,
+        lastMessageAt: r.last_message_at,
+      })),
+      recentUsers: recentUsers.map((r) => ({
+        id: r.id,
+        email: r.email,
+        name: r.name,
+        role: r.role,
+        createdAt: r.created_at,
+        sessionCount: r.session_count,
+        questionCount: r.question_count,
+        lastActiveAt: r.last_active_at,
+      })),
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "failed to load admin stats" },
+      { status: 500 },
+    );
+  }
 }

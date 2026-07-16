@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { AdminStats } from "@/lib/admin-dashboard";
+import { readJsonResponse } from "@/lib/http";
 
 export function useAdminStats(nextPath: string) {
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -22,7 +23,7 @@ export function useAdminStats(nextPath: string) {
           return;
         }
 
-        const json = await res.json();
+        const json = await readJsonResponse<AdminStats & { error?: string }>(res);
         if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
         if (alive) setStats(json as AdminStats);
       } catch (err) {

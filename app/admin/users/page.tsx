@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { StatCard } from "@/components/StatCard";
+import { readJsonResponse } from "@/lib/http";
 
 interface AdminUser {
   id: string;
@@ -39,9 +40,9 @@ export default function AdminUsersPage() {
         window.location.href = `/sign-in?next=${encodeURIComponent("/admin/users")}`;
         return;
       }
-      const uJson = await uRes.json();
+      const uJson = await readJsonResponse<{ users: AdminUser[]; error?: string }>(uRes);
       if (!uRes.ok) throw new Error(uJson.error || `HTTP ${uRes.status}`);
-      const meJson = (await meRes.json()) as MeResponse;
+      const meJson = await readJsonResponse<MeResponse>(meRes);
       setUsers(uJson.users as AdminUser[]);
       setMyId(meJson.user?.id ?? null);
     } catch (err) {
@@ -91,7 +92,7 @@ export default function AdminUsersPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ role: newRole }),
       });
-      const json = await res.json();
+      const json = await readJsonResponse<{ error?: string }>(res);
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
     } catch (err) {
       setUsers(prev);
@@ -109,7 +110,7 @@ export default function AdminUsersPage() {
     setUsers((all) => all.filter((x) => x.id !== u.id));
     try {
       const res = await fetch(`/api/admin/users/${u.id}`, { method: "DELETE" });
-      const json = await res.json();
+      const json = await readJsonResponse<{ error?: string }>(res);
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
     } catch (err) {
       setUsers(prev);
