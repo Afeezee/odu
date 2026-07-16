@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #FAF7F2;
+  --surface: #FFFFFF;
+  --text: #1B1416;
+  --muted: #6B5F5F;
+  --border: #EDE5D8;
+  --maroon: #7A1F2E;
+  --gold: #D4A017;
+  --navy: #1B3A5C;
+}
+
+.dark {
+  --bg: #141014;
+  --surface: #1E1A1E;
+  --text: #F1E9DC;
+  --muted: #A99E9E;
+  --border: #2E2830;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100%;
+}
+
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Streaming caret */
+.streaming-caret::after {
+  content: "▍";
+  display: inline-block;
+  margin-left: 2px;
+  animation: caret 1s steps(2, start) infinite;
+  color: var(--gold);
+}
+@keyframes caret {
+  to { opacity: 0; }
+}
+
+/* Prose tuning inside chat bubbles */
+.chat-prose p { margin: 0 0 0.6em 0; }
+.chat-prose p:last-child { margin-bottom: 0; }
+.chat-prose ul, .chat-prose ol { margin: 0.4em 0 0.6em 1.2em; }
+.chat-prose li { margin: 0.15em 0; }
+.chat-prose table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.9em;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.chat-prose th, .chat-prose td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.chat-prose code {
+  background: color-mix(in oklab, var(--border) 55%, transparent);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
