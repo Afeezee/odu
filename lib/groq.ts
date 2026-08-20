@@ -1,9 +1,12 @@
 /**
  * Groq client + shared chat-completion helper.
  *
- * Model: llama-3.3-70b-versatile (Groq's current production Llama 3.3 model
- * as of late 2025 / 2026). If Groq deprecates the ID, check
- * https://console.groq.com/docs/models and swap GROQ_MODEL below.
+ * Model: openai/gpt-oss-120b — Groq's flagship OpenAI open-weights model.
+ * Swapped in after Groq deprecated llama-3.3-70b-versatile in early 2026.
+ * Quality is comparable, streaming is just as fast, and Groq keeps the ID
+ * stable across its GPT-OSS releases. To switch models later (Qwen 3,
+ * Llama 4, Kimi K2, etc.) update GROQ_MODEL below or set the GROQ_MODEL
+ * env var — see https://console.groq.com/docs/models for the current list.
  */
 import Groq from "groq-sdk";
 
@@ -12,7 +15,8 @@ if (!process.env.GROQ_API_KEY) {
   // message instead of crashing the whole build. We check per-request.
 }
 
-export const GROQ_MODEL = "llama-3.3-70b-versatile";
+// Env-overridable so ops can rotate models without a code change / deploy.
+export const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 
 let client: Groq | null = null;
 export function getGroq(): Groq {
@@ -70,15 +74,23 @@ export async function streamGroqChat(params: {
   userMessage: string;
 }) {
   const groq = getGroq();
+  // Reasoning models (gpt-oss, qwen3, etc.) spend tokens on an internal
+  // reasoning trace before the visible answer. For a Q&A chatbot answering
+  // handbook facts we want fast, direct replies — so we cap effort to "low"
+  // and give max_tokens some headroom to cover any reasoning overhead.
+  // `reasoning_effort` isn't typed by groq-sdk yet, so it's set via a
+  // separate cast — the Groq API forwards unknown keys verbatim.
+  const extras = { reasoning_effort: "low" } as unknown as Record<string, never>;
   return groq.chat.completions.create({
     model: GROQ_MODEL,
     stream: true,
     temperature: 0.2,
-    max_tokens: 1024,
+    max_tokens: 2048,
     messages: [
       { role: "system", content: params.systemPrompt },
       ...params.history.map((t) => ({ role: t.role, content: t.content })),
       { role: "user", content: params.userMessage },
     ],
+    ...extras,
   });
 }
