@@ -1,12 +1,18 @@
 /**
  * Groq client + shared chat-completion helper.
  *
- * Model: openai/gpt-oss-120b — Groq's flagship OpenAI open-weights model.
- * Swapped in after Groq deprecated llama-3.3-70b-versatile in early 2026.
- * Quality is comparable, streaming is just as fast, and Groq keeps the ID
- * stable across its GPT-OSS releases. To switch models later (Qwen 3,
- * Llama 4, Kimi K2, etc.) update GROQ_MODEL below or set the GROQ_MODEL
- * env var — see https://console.groq.com/docs/models for the current list.
+ * Model: qwen/qwen3.6-27b with reasoning_effort="none".
+ *
+ * Why not gpt-oss-120b: gpt-oss models always emit a silent reasoning phase
+ * before writing the visible answer. On short replies that phase is quick
+ * and the UI feels fast; on longer answers the model reasons noticeably
+ * longer while the UI shows nothing — looks like a hang, then a burst of
+ * tokens arrives. Qwen 3.6 supports reasoning_effort="none" which turns
+ * the reasoning phase off entirely, so tokens start flowing at ~1.2s and
+ * keep streaming smoothly regardless of answer length.
+ *
+ * To rotate later, set GROQ_MODEL in .env.local — see the current list at
+ * https://console.groq.com/docs/models.
  */
 import Groq from "groq-sdk";
 
@@ -16,7 +22,7 @@ if (!process.env.GROQ_API_KEY) {
 }
 
 // Env-overridable so ops can rotate models without a code change / deploy.
-export const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+export const GROQ_MODEL = process.env.GROQ_MODEL || "qwen/qwen3.6-27b";
 
 let client: Groq | null = null;
 export function getGroq(): Groq {
@@ -74,13 +80,12 @@ export async function streamGroqChat(params: {
   userMessage: string;
 }) {
   const groq = getGroq();
-  // Reasoning models (gpt-oss, qwen3, etc.) spend tokens on an internal
-  // reasoning trace before the visible answer. For a Q&A chatbot answering
-  // handbook facts we want fast, direct replies — so we cap effort to "low"
-  // and give max_tokens some headroom to cover any reasoning overhead.
-  // `reasoning_effort` isn't typed by groq-sdk yet, so it's set via a
-  // separate cast — the Groq API forwards unknown keys verbatim.
-  const extras = { reasoning_effort: "low" } as unknown as Record<string, never>;
+  // Qwen 3.6 defaults to a chain-of-thought reasoning phase that streams
+  // no visible content until it's done — bad UX for chat, especially on
+  // longer answers. reasoning_effort="none" disables it so tokens start
+  // flowing immediately. The Groq SDK doesn't type this key yet, so we
+  // spread it in via a cast — the API forwards unknown keys verbatim.
+  const extras = { reasoning_effort: "none" } as unknown as Record<string, never>;
   return groq.chat.completions.create({
     model: GROQ_MODEL,
     stream: true,
