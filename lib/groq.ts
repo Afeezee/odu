@@ -74,28 +74,57 @@ export interface ChatTurn {
   content: string;
 }
 
-export async function streamGroqChat(params: {
+interface CompletionParams {
   systemPrompt: string;
   history: ChatTurn[];
   userMessage: string;
-}) {
+}
+
+function buildMessages(params: CompletionParams) {
+  return [
+    { role: "system" as const, content: params.systemPrompt },
+    ...params.history.map((t) => ({ role: t.role, content: t.content })),
+    { role: "user" as const, content: params.userMessage },
+  ];
+}
+
+// Qwen 3.6 defaults to a chain-of-thought reasoning phase that emits no
+// visible content until it's done. For a Q&A chatbot we want direct answers,
+// so reasoning_effort="none" turns the thinking phase off entirely. The
+// Groq SDK doesn't type this key yet, so it's spread in via a cast — the
+// API forwards unknown keys verbatim.
+const REASONING_EXTRAS = { reasoning_effort: "none" } as unknown as Record<string, never>;
+
+/**
+ * Non-streaming completion. RAG pipelines already have variable latency from
+ * embedding + retrieval; a single "here's your answer" response tends to feel
+ * better than a token-by-token stream that stalls mid-answer. The client
+ * shows a "thinking" indicator while this promise is in flight.
+ */
+export async function completeGroqChat(params: CompletionParams): Promise<string> {
   const groq = getGroq();
-  // Qwen 3.6 defaults to a chain-of-thought reasoning phase that streams
-  // no visible content until it's done — bad UX for chat, especially on
-  // longer answers. reasoning_effort="none" disables it so tokens start
-  // flowing immediately. The Groq SDK doesn't type this key yet, so we
-  // spread it in via a cast — the API forwards unknown keys verbatim.
-  const extras = { reasoning_effort: "none" } as unknown as Record<string, never>;
+  const res = await groq.chat.completions.create({
+    model: GROQ_MODEL,
+    stream: false,
+    temperature: 0.2,
+    max_tokens: 2048,
+    messages: buildMessages(params),
+    ...REASONING_EXTRAS,
+  });
+  return res.choices?.[0]?.message?.content ?? "";
+}
+
+/**
+ * Kept for callers that still want SSE. Not currently used by /api/chat.
+ */
+export async function streamGroqChat(params: CompletionParams) {
+  const groq = getGroq();
   return groq.chat.completions.create({
     model: GROQ_MODEL,
     stream: true,
     temperature: 0.2,
     max_tokens: 2048,
-    messages: [
-      { role: "system", content: params.systemPrompt },
-      ...params.history.map((t) => ({ role: t.role, content: t.content })),
-      { role: "user", content: params.userMessage },
-    ],
-    ...extras,
+    messages: buildMessages(params),
+    ...REASONING_EXTRAS,
   });
 }

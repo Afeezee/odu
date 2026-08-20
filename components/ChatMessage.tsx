@@ -6,7 +6,8 @@ export interface ChatMessageData {
   id: string;
   role: "user" | "assistant";
   content: string;
-  streaming?: boolean;
+  /** Assistant reply is still in flight — show the thinking indicator. */
+  pending?: boolean;
 }
 
 // Minimal markdown-ish renderer: bold, italic, inline code, and lists.
@@ -87,8 +88,22 @@ function renderBlocks(content: string) {
   return blocks;
 }
 
+function ThinkingDots() {
+  return (
+    <span className="inline-flex items-center gap-2 text-oui-muted">
+      <span className="inline-flex gap-1" aria-hidden>
+        <span className="thinking-dot" style={{ animationDelay: "0ms" }} />
+        <span className="thinking-dot" style={{ animationDelay: "160ms" }} />
+        <span className="thinking-dot" style={{ animationDelay: "320ms" }} />
+      </span>
+      <span className="text-sm">Odu is thinking…</span>
+    </span>
+  );
+}
+
 export function ChatMessage({ msg }: { msg: ChatMessageData }) {
   const isUser = msg.role === "user";
+  const showThinking = !isUser && msg.pending && !msg.content;
   return (
     <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
       {!isUser && (
@@ -103,9 +118,11 @@ export function ChatMessage({ msg }: { msg: ChatMessageData }) {
             : "bg-oui-surface dark:bg-oui-surface-dark border border-oui-border dark:border-oui-border-dark rounded-bl-md"
         }`}
       >
-        <div className={`chat-prose ${msg.streaming ? "streaming-caret" : ""}`}>
-          {renderBlocks(msg.content)}
-        </div>
+        {showThinking ? (
+          <ThinkingDots />
+        ) : (
+          <div className="chat-prose">{renderBlocks(msg.content)}</div>
+        )}
       </div>
     </div>
   );

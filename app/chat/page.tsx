@@ -19,6 +19,16 @@ interface StoredMessage {
   content: string;
 }
 
+interface ChatResponse {
+  ok: true;
+  sessionId: string;
+  message: { id: string; role: "assistant"; content: string };
+}
+interface ChatError {
+  error: string;
+  sessionId?: string;
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -57,7 +67,6 @@ export default function ChatPage() {
     try {
       const res = await fetch(`/api/sessions/${id}`);
       if (res.status === 404) {
-        // Session likely deleted; reset.
         persistSessionId(null);
         setMessages([]);
         return;
@@ -96,14 +105,14 @@ export default function ChatPage() {
       role: "user",
       content: text,
     };
-    const assistantId = crypto.randomUUID();
-    const assistantMsg: ChatMessageData = {
-      id: assistantId,
+    const pendingId = crypto.randomUUID();
+    const pendingMsg: ChatMessageData = {
+      id: pendingId,
       role: "assistant",
       content: "",
-      streaming: true,
+      pending: true,
     };
-    setMessages((m) => [...m, userMsg, assistantMsg]);
+    setMessages((m) => [...m, userMsg, pendingMsg]);
 
     try {
       const res = await fetch("/api/chat", {
@@ -115,69 +124,36 @@ export default function ChatPage() {
         window.location.href = `/sign-in?next=${encodeURIComponent("/chat")}`;
         return;
       }
-      if (!res.body) throw new Error("no response body");
-      const returnedSession = res.headers.get("x-session-id");
-      if (returnedSession && returnedSession !== sessionId) {
-        persistSessionId(returnedSession);
+      const payload = (await res.json()) as ChatResponse | ChatError;
+
+      if (!res.ok || !("ok" in payload)) {
+        const err = (payload as ChatError).error ?? `HTTP ${res.status}`;
+        setMessages((all) =>
+          all.map((m) =>
+            m.id === pendingId
+              ? { ...m, pending: false, content: `Sorry — ${err}` }
+              : m,
+          ),
+        );
+        return;
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-
-      const applyEvent = (event: string, data: string) => {
-        try {
-          const payload = JSON.parse(data);
-          if (event === "token") {
-            const t = (payload as { t: string }).t;
-            setMessages((all) =>
-              all.map((m) => (m.id === assistantId ? { ...m, content: m.content + t } : m)),
-            );
-          } else if (event === "done") {
-            setMessages((all) =>
-              all.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
-            );
-          } else if (event === "error") {
-            setMessages((all) =>
-              all.map((m) =>
-                m.id === assistantId
-                  ? {
-                      ...m,
-                      streaming: false,
-                      content:
-                        m.content ||
-                        `Sorry — I hit an error: ${(payload as { error: string }).error}`,
-                    }
-                  : m,
-              ),
-            );
-          }
-        } catch {}
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buf.indexOf("\n\n")) !== -1) {
-          const frame = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          const lines = frame.split("\n");
-          let event = "message";
-          let data = "";
-          for (const line of lines) {
-            if (line.startsWith("event: ")) event = line.slice(7).trim();
-            else if (line.startsWith("data: ")) data = line.slice(6);
-          }
-          if (data) applyEvent(event, data);
-        }
+      if (payload.sessionId && payload.sessionId !== sessionId) {
+        persistSessionId(payload.sessionId);
       }
+
+      setMessages((all) =>
+        all.map((m) =>
+          m.id === pendingId
+            ? { ...m, pending: false, content: payload.message.content }
+            : m,
+        ),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown error";
       setMessages((all) =>
         all.map((m) =>
-          m.id === assistantId ? { ...m, streaming: false, content: `Sorry — ${message}` } : m,
+          m.id === pendingId ? { ...m, pending: false, content: `Sorry — ${message}` } : m,
         ),
       );
     } finally {

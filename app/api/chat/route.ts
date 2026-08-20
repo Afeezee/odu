@@ -1,11 +1,11 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db/client";
 import { chatMessages, chatSessions } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { embedText } from "@/lib/embeddings";
 import { retrieveTopK } from "@/lib/retrieval";
-import { buildSystemPrompt, streamGroqChat, type ChatTurn } from "@/lib/groq";
+import { buildSystemPrompt, completeGroqChat, type ChatTurn } from "@/lib/groq";
 import { getSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -19,27 +19,18 @@ interface ChatRequest {
 export async function POST(req: NextRequest) {
   const auth = await getSession();
   if (!auth) {
-    return new Response(JSON.stringify({ error: "sign-in required" }), {
-      status: 401,
-      headers: { "content-type": "application/json" },
-    });
+    return NextResponse.json({ error: "sign-in required" }, { status: 401 });
   }
 
   let body: ChatRequest;
   try {
     body = (await req.json()) as ChatRequest;
   } catch {
-    return new Response(JSON.stringify({ error: "invalid JSON body" }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
   const message = body.message?.trim();
   if (!message) {
-    return new Response(JSON.stringify({ error: "message is required" }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
+    return NextResponse.json({ error: "message is required" }, { status: 400 });
   }
 
   // Session bootstrap. If the supplied sessionId belongs to a different user
@@ -78,8 +69,8 @@ export async function POST(req: NextRequest) {
     .reverse()
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-  // Persist the user message before streaming so it's durable even if the
-  // client disconnects mid-response.
+  // Persist the user message first so it's durable even if the completion
+  // call fails partway through.
   await db.insert(chatMessages).values({
     sessionId,
     role: "user",
@@ -88,60 +79,34 @@ export async function POST(req: NextRequest) {
   });
 
   const systemPrompt = buildSystemPrompt(retrieved);
-  const groqStream = await streamGroqChat({ systemPrompt, history, userMessage: message });
+  let answer: string;
+  try {
+    answer = (await completeGroqChat({ systemPrompt, history, userMessage: message })).trim();
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : "unknown error from model";
+    return NextResponse.json(
+      { error: `The assistant is unavailable right now (${errMsg}). Please try again.`, sessionId },
+      { status: 502 },
+    );
+  }
+  if (!answer) {
+    answer = "I couldn't produce an answer this time — please try rephrasing your question.";
+  }
 
-  // We emit an SSE-like stream:
-  //   event: sources  data: [{...}]
-  //   event: token    data: {"t": "…"}
-  //   event: done     data: {"sessionId": "…"}
-  // The frontend consumes this via a small custom reader.
-  const encoder = new TextEncoder();
-  let assistantAcc = "";
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (event: string, data: unknown) => {
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-      };
-      try {
-        // Retrieved chunk IDs are stored in chat_messages for debugging /
-        // transparency, but never surfaced to the client — the user should
-        // never see reference markers or a sources panel.
-        for await (const chunk of groqStream) {
-          const token = chunk.choices?.[0]?.delta?.content ?? "";
-          if (token) {
-            assistantAcc += token;
-            send("token", { t: token });
-          }
-        }
-        send("done", { sessionId });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "unknown error";
-        send("error", { error: msg });
-      } finally {
-        // Persist the completed assistant message (or whatever we managed
-        // to stream) so history is preserved across follow-ups.
-        try {
-          if (assistantAcc.trim().length > 0) {
-            await db.insert(chatMessages).values({
-              sessionId,
-              role: "assistant",
-              content: assistantAcc,
-              retrievedChunkIds: retrievedIds,
-            });
-          }
-        } catch (e) {
-          console.error("Failed to persist assistant message:", e);
-        }
-        controller.close();
-      }
-    },
+  await db.insert(chatMessages).values({
+    sessionId,
+    role: "assistant",
+    content: answer,
+    retrievedChunkIds: retrievedIds,
   });
 
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-transform",
-      "x-session-id": sessionId,
+  return NextResponse.json({
+    ok: true,
+    sessionId,
+    message: {
+      id: `assistant-${Date.now()}`,
+      role: "assistant" as const,
+      content: answer,
     },
   });
 }
